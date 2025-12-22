@@ -6,7 +6,7 @@ Supports multi-objective optimization (calibration error + parameter count).
 
 Usage:
 ------
-from bayesian_optimization import (
+from rctbp_bf_training.core.optimization import (
     create_study,
     compute_composite_objective,
     get_param_count,

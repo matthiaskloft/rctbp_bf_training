@@ -8,7 +8,7 @@ This module provides ANCOVA-specific implementations:
 - Validation pipeline helpers
 - Model metadata utilities
 
-Generic infrastructure has been extracted to bayesflow_infrastructure.py
+Generic infrastructure has been extracted to rctbp_bf_training.core.infrastructure
 """
 
 from dataclasses import dataclass, field, asdict
@@ -406,7 +406,7 @@ class NetworkConfig:
     """
     Legacy network configuration (backwards compatibility).
 
-    New code should use WorkflowConfig from bayesflow_infrastructure.
+    New code should use WorkflowConfig from rctbp_bf_training.core.infrastructure.
     This class is maintained for compatibility with existing code.
     """
     summary_dim: int = 10
@@ -520,7 +520,7 @@ def create_adapter() -> bf.Adapter:
     -------
     bf.Adapter configured for ANCOVA 2-arms model
     """
-    from bayesflow_infrastructure import create_adapter as build_adapter
+    from rctbp_bf_training.core.infrastructure import create_adapter as build_adapter
     return build_adapter(get_ancova_adapter_spec())
 
 
@@ -638,7 +638,7 @@ def make_infer_fn(approximator) -> Callable:
     -------
     callable: infer_fn(data, n_samples) -> np.ndarray
     """
-    from functions_validation import make_bayesflow_infer_fn
+    from rctbp_bf_training.core.validation import make_bayesflow_infer_fn
 
     return make_bayesflow_infer_fn(
         approximator,

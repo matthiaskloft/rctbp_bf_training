@@ -4,7 +4,19 @@
       "Bash(python:*)",
       "Bash(pytest:*)",
       "Bash(ruff check:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Matze\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Matze-Documents-GitHub-rctbp-bf-training\\\\tasks\\\\bc6ac29.output\" -Tail 50)",
+      "Bash(jupyter kernelspec:*)",
+      "Bash(where:*)",
+      "Bash(jupyter --version:*)",
+      "Bash(jupyter:*)",
+      "Bash(venv\\\\Scripts\\\\jupyter.exe kernelspec:*)",
+      "Bash(./venv/Scripts/jupyter.exe kernelspec:*)",
+      "Bash(venv/Scripts/pip.exe install:*)",
+      "Bash(venv/Scripts/python.exe:*)",
+      "Bash(venv\\\\Scripts\\\\python.exe -m pip install:*)",
+      "Bash(./venv/Scripts/python.exe -m pip:*)"
     ]
   }
 }

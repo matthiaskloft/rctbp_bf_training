@@ -30,7 +30,7 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "bayesflow>=2.0",
-    "keras>=3.0",
+    "keras>=3.9,<3.13",  # Pin to <3.13 for BayesFlow 2.0.7 compatibility (bug in 3.13+)
     "optuna>=3.0",
 ]
 

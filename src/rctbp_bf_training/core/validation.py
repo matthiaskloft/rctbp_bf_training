@@ -6,7 +6,7 @@ across a grid of conditions.
 
 Usage:
 ------
-from functions_validation import (
+from rctbp_bf_training.core.validation import (
     run_validation_pipeline,
     extract_calibration_metrics,
     make_bayesflow_infer_fn,
