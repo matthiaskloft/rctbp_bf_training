@@ -432,9 +432,8 @@ def create_ancova_objective(
     """
     Create Optuna objective function for ANCOVA model optimization.
 
-    This factory function returns an objective function closure that can be
-    passed directly to `study.optimize()`. The objective function builds,
-    trains, and validates models with different hyperparameters sampled by Optuna.
+    This is a lightweight wrapper around the generic `create_optimization_objective`
+    that provides ANCOVA-specific parameter keys and inference conditions.
 
     Parameters
     ----------
@@ -474,120 +473,152 @@ def create_ancova_objective(
     ... )
     >>> study.optimize(objective, n_trials=30)
     """
+    from rctbp_bf_training.core.optimization import create_optimization_objective
+
+    return create_optimization_objective(
+        config=config,
+        simulator=simulator,
+        adapter=adapter,
+        search_space=search_space,
+        validation_conditions=validation_conditions,
+        # ANCOVA-specific configuration
+        inference_conditions=["N", "p_alloc", "prior_df", "prior_scale"],
+        param_key="b_group",
+        data_keys=["outcome", "covariate", "group"],
+        context_keys={"N": int, "p_alloc": float, "prior_df": float, "prior_scale": float},
+        true_param_key="b_arm_treat",
+        simulate_fn_factory=make_simulate_fn,
+        n_sims=n_sims,
+        n_post_draws=n_post_draws,
+        rng=rng,
+    )
+
+
+# =============================================================================
+# Training Helpers for train_until_threshold (ANCOVA-Specific)
+# =============================================================================
+
+def create_ancova_training_functions(
+    simulator: bf.Simulator,
+    adapter: bf.Adapter,
+    validation_conditions: List[Dict],
+    rng: np.random.Generator,
+) -> tuple[Callable, Callable, Callable]:
+    """
+    Create workflow builder, trainer, and validator functions for ANCOVA model.
+
+    These functions are designed to work with `train_until_threshold` from
+    the optimization module. Returns ANCOVA-specific implementations with
+    the correct parameter keys and inference conditions.
+
+    Parameters
+    ----------
+    simulator : bf.Simulator
+        BayesFlow simulator for the ANCOVA model
+    adapter : bf.Adapter
+        BayesFlow adapter for data transformation
+    validation_conditions : list of dict
+        Conditions grid for validation (typically from create_validation_grid(extended=True))
+    rng : np.random.Generator
+        Random number generator for reproducibility
+
+    Returns
+    -------
+    tuple of (build_workflow_fn, train_fn, validate_fn)
+        - build_workflow_fn(params) -> workflow
+        - train_fn(workflow) -> history
+        - validate_fn(workflow) -> metrics
+
+    Examples
+    --------
+    >>> config = ANCOVAConfig()
+    >>> simulator = create_simulator(config, RNG)
+    >>> adapter = create_adapter()
+    >>> conditions = create_validation_grid(extended=True)
+    >>>
+    >>> build_fn, train_fn, validate_fn = create_ancova_training_functions(
+    ...     simulator, adapter, conditions, RNG
+    ... )
+    >>>
+    >>> result = train_until_threshold(
+    ...     build_workflow_fn=build_fn,
+    ...     train_fn=train_fn,
+    ...     validate_fn=validate_fn,
+    ...     hyperparams=best_params,
+    ...     thresholds=QualityThresholds(),
+    ... )
+    """
     from rctbp_bf_training.core.infrastructure import (
         params_dict_to_workflow_config,
         build_summary_network,
         build_inference_network,
-    )
-    from rctbp_bf_training.core.optimization import (
-        sample_hyperparameters,
-        get_param_count,
-        extract_objective_values,
-        cleanup_trial,
     )
     from rctbp_bf_training.core.validation import (
         run_validation_pipeline,
         make_bayesflow_infer_fn,
     )
     from rctbp_bf_training.core.utils import MovingAverageEarlyStopping
-    import gc
+    import keras
 
-    if rng is None:
-        rng = np.random.default_rng()
-
-    def objective(trial):
-        """Optuna objective: returns (calibration_error, param_count)."""
-        import keras
-
-        # Sample hyperparameters
-        params = sample_hyperparameters(trial, search_space)
-
-        # Convert to WorkflowConfig and build networks
+    def build_workflow_fn(params):
+        """Build a fresh workflow from hyperparameters."""
         workflow_config = params_dict_to_workflow_config(params)
         summary_net = build_summary_network(workflow_config.summary_network)
         inference_net = build_inference_network(workflow_config.inference_network)
 
-        # Setup learning rate schedule
-        steps_per_epoch = params["batch_size"] * 100
+        steps_per_epoch = params["batch_size"] * 50
         lr_schedule = keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=params["initial_lr"],
             decay_steps=steps_per_epoch,
-            decay_rate=params["decay_rate"],
+            decay_rate=params.get("decay_rate", 0.85),
             staircase=True,
         )
         opt = keras.optimizers.Adam(learning_rate=lr_schedule)
 
-        # Create workflow
-        wf = bf.BasicWorkflow(
+        return bf.BasicWorkflow(
             simulator=simulator,
             adapter=adapter,
             inference_network=inference_net,
             summary_network=summary_net,
             optimizer=opt,
             inference_conditions=["N", "p_alloc", "prior_df", "prior_scale"],
-            checkpoint_name=f"optuna_trial_{trial.number}",
         )
 
-        try:
-            wf.approximator.compile(optimizer=opt)
-        except Exception:
-            pass
-
+    def train_fn(workflow):
+        """Train the workflow."""
         early_stop = MovingAverageEarlyStopping(
-            window=params["window"],
-            patience=params["patience"],
-            restore_best_weights=True,
+            window=10, patience=10, restore_best_weights=True
+        )
+        return workflow.fit_online(
+            epochs=50,
+            batch_size=320,
+            num_batches_per_epoch=50,
+            validation_data=1000,
+            callbacks=[early_stop],
         )
 
-        # Train
-        try:
-            history = wf.fit_online(
-                epochs=config.workflow.training.epochs,
-                batch_size=params["batch_size"],
-                num_batches_per_epoch=config.workflow.training.batches_per_epoch,
-                validation_data=config.workflow.training.validation_sims,
-                callbacks=[early_stop],
-            )
-        except Exception as e:
-            print(f"Trial {trial.number} FAILED: {e}")
-            cleanup_trial()
-            return 1.0, 1e9
-
-        param_count = get_param_count(wf.approximator)
-
-        # Validate
-        simulate_fn_opt = make_simulate_fn(rng=rng)
-        infer_fn_opt = make_bayesflow_infer_fn(
-            wf.approximator,
+    def validate_fn(workflow):
+        """Validate the workflow on the strict grid."""
+        simulate_fn = make_simulate_fn(rng=rng)
+        infer_fn = make_bayesflow_infer_fn(
+            workflow.approximator,
             param_key="b_group",
             data_keys=["outcome", "covariate", "group"],
             context_keys={"N": int, "p_alloc": float, "prior_df": float, "prior_scale": float},
         )
 
-        try:
-            results = run_validation_pipeline(
-                conditions_list=validation_conditions,
-                n_sims=n_sims,
-                n_post_draws=n_post_draws,
-                simulate_fn=simulate_fn_opt,
-                infer_fn=infer_fn_opt,
-                true_param_key="b_arm_treat",
-                verbose=False,
-            )
-            cal_error, _ = extract_objective_values(results["metrics"], param_count)
-        except Exception as e:
-            print(f"Trial {trial.number} validation FAILED: {e}")
-            cal_error = 1.0
+        results = run_validation_pipeline(
+            conditions_list=validation_conditions,
+            n_sims=1000,
+            n_post_draws=1000,
+            simulate_fn=simulate_fn,
+            infer_fn=infer_fn,
+            true_param_key="b_arm_treat",
+            verbose=False,
+        )
+        return results["metrics"]
 
-        print(f"Trial {trial.number}: cal_error={cal_error:.4f}, params={param_count:,}")
-
-        cleanup_trial()
-        del wf, summary_net, inference_net
-        gc.collect()
-
-        return cal_error, param_count
-
-    return objective
+    return build_workflow_fn, train_fn, validate_fn
 
 
 # =============================================================================

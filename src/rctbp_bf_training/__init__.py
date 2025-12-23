@@ -19,6 +19,7 @@ from rctbp_bf_training.core.infrastructure import (
 from rctbp_bf_training.core.optimization import (
     create_study,
     HyperparameterSpace,
+    create_optimization_objective,
 )
 
 from rctbp_bf_training.core.validation import (
@@ -60,6 +61,7 @@ __all__ = [
     "load_workflow_with_metadata",
     "create_study",
     "HyperparameterSpace",
+    "create_optimization_objective",
     "run_validation_pipeline",
     "loguniform_int",
     "loguniform_float",

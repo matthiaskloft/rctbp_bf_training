@@ -889,6 +889,202 @@ def run_optimization(
 
 
 # =============================================================================
+# GENERIC OBJECTIVE FUNCTION BUILDER
+# =============================================================================
+
+def create_optimization_objective(
+    config: Any,
+    simulator: Any,
+    adapter: Any,
+    search_space: HyperparameterSpace,
+    validation_conditions: List[Dict],
+    inference_conditions: List[str],
+    param_key: str,
+    data_keys: List[str],
+    context_keys: Dict[str, type],
+    true_param_key: str,
+    simulate_fn_factory: Callable,
+    n_sims: int = 500,
+    n_post_draws: int = 500,
+    rng: np.random.Generator = None,
+) -> Callable:
+    """
+    Create a generic Optuna objective function for BayesFlow model optimization.
+
+    This is a model-agnostic factory that creates objective functions for
+    hyperparameter optimization. Model-specific wrappers should call this
+    function with their specific parameter keys and configurations.
+
+    Parameters
+    ----------
+    config : object with workflow.training attributes
+        Configuration object containing training settings (epochs, batches_per_epoch, validation_sims)
+    simulator : bf.Simulator
+        BayesFlow simulator for the model
+    adapter : bf.Adapter
+        BayesFlow adapter for data transformation
+    search_space : HyperparameterSpace
+        Search space for hyperparameter sampling
+    validation_conditions : list of dict
+        Conditions grid for validation
+    inference_conditions : list of str
+        List of context variable names (e.g., ["N", "p_alloc", "prior_df", "prior_scale"])
+    param_key : str
+        Key for the parameter in the workflow (e.g., "b_group")
+    data_keys : list of str
+        Keys for data in inference (e.g., ["outcome", "covariate", "group"])
+    context_keys : dict
+        Mapping of context keys to their types (e.g., {"N": int, "p_alloc": float})
+    true_param_key : str
+        Key for true parameter in validation (e.g., "b_arm_treat")
+    simulate_fn_factory : callable
+        Function that takes rng and returns a simulate function
+    n_sims : int, default=500
+        Number of simulations per condition for validation
+    n_post_draws : int, default=500
+        Number of posterior draws per simulation
+    rng : np.random.Generator, optional
+        Random number generator for reproducibility
+
+    Returns
+    -------
+    objective : Callable[[Trial], Tuple[float, int]]
+        Objective function that takes an Optuna trial and returns
+        (calibration_error, parameter_count)
+
+    Examples
+    --------
+    >>> from rctbp_bf_training.core.optimization import create_optimization_objective
+    >>>
+    >>> # Model-specific wrapper
+    >>> def create_my_model_objective(config, simulator, adapter, search_space, conditions):
+    ...     return create_optimization_objective(
+    ...         config=config,
+    ...         simulator=simulator,
+    ...         adapter=adapter,
+    ...         search_space=search_space,
+    ...         validation_conditions=conditions,
+    ...         inference_conditions=["N", "p_alloc"],
+    ...         param_key="theta",
+    ...         data_keys=["y", "x"],
+    ...         context_keys={"N": int, "p_alloc": float},
+    ...         true_param_key="theta_true",
+    ...         simulate_fn_factory=my_simulate_fn_factory,
+    ...         n_sims=500,
+    ...         n_post_draws=500,
+    ...     )
+    """
+    from rctbp_bf_training.core.infrastructure import (
+        params_dict_to_workflow_config,
+        build_summary_network,
+        build_inference_network,
+    )
+    from rctbp_bf_training.core.validation import (
+        run_validation_pipeline,
+        make_bayesflow_infer_fn,
+    )
+    from rctbp_bf_training.core.utils import MovingAverageEarlyStopping
+    import bayesflow as bf
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    def objective(trial):
+        """Optuna objective: returns (calibration_error, param_count)."""
+        import keras
+
+        # Sample hyperparameters
+        params = sample_hyperparameters(trial, search_space)
+
+        # Convert to WorkflowConfig and build networks
+        workflow_config = params_dict_to_workflow_config(params)
+        summary_net = build_summary_network(workflow_config.summary_network)
+        inference_net = build_inference_network(workflow_config.inference_network)
+
+        # Setup learning rate schedule
+        steps_per_epoch = params["batch_size"] * 100
+        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=params["initial_lr"],
+            decay_steps=steps_per_epoch,
+            decay_rate=params["decay_rate"],
+            staircase=True,
+        )
+        opt = keras.optimizers.Adam(learning_rate=lr_schedule)
+
+        # Create workflow
+        wf = bf.BasicWorkflow(
+            simulator=simulator,
+            adapter=adapter,
+            inference_network=inference_net,
+            summary_network=summary_net,
+            optimizer=opt,
+            inference_conditions=inference_conditions,
+            checkpoint_name=f"optuna_trial_{trial.number}",
+        )
+
+        try:
+            wf.approximator.compile(optimizer=opt)
+        except Exception:
+            pass
+
+        early_stop = MovingAverageEarlyStopping(
+            window=params["window"],
+            patience=params["patience"],
+            restore_best_weights=True,
+        )
+
+        # Train
+        try:
+            history = wf.fit_online(
+                epochs=config.workflow.training.epochs,
+                batch_size=params["batch_size"],
+                num_batches_per_epoch=config.workflow.training.batches_per_epoch,
+                validation_data=config.workflow.training.validation_sims,
+                callbacks=[early_stop],
+            )
+        except Exception as e:
+            print(f"Trial {trial.number} FAILED: {e}")
+            cleanup_trial()
+            return 1.0, 1e9
+
+        param_count = get_param_count(wf.approximator)
+
+        # Validate
+        simulate_fn_opt = simulate_fn_factory(rng=rng)
+        infer_fn_opt = make_bayesflow_infer_fn(
+            wf.approximator,
+            param_key=param_key,
+            data_keys=data_keys,
+            context_keys=context_keys,
+        )
+
+        try:
+            results = run_validation_pipeline(
+                conditions_list=validation_conditions,
+                n_sims=n_sims,
+                n_post_draws=n_post_draws,
+                simulate_fn=simulate_fn_opt,
+                infer_fn=infer_fn_opt,
+                true_param_key=true_param_key,
+                verbose=False,
+            )
+            cal_error, _ = extract_objective_values(results["metrics"], param_count)
+        except Exception as e:
+            print(f"Trial {trial.number} validation FAILED: {e}")
+            cal_error = 1.0
+
+        print(f"Trial {trial.number}: cal_error={cal_error:.4f}, params={param_count:,}")
+
+        cleanup_trial()
+        del wf, summary_net, inference_net
+        gc.collect()
+
+        return cal_error, param_count
+
+    return objective
+
+
+# =============================================================================
 # THRESHOLD-BASED TRAINING LOOP
 # =============================================================================
 
