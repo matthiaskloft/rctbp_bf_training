@@ -396,132 +396,198 @@ def create_simulator(config: ANCOVAConfig, rng: np.random.Generator = None) -> b
     return create_generic_simulator(prior_fn, likelihood_fn, meta_fn)
 
 
-# =============================================================================
-# Backwards Compatibility Wrappers
-# =============================================================================
-
-# Legacy NetworkConfig for backwards compatibility
-@dataclass
-class NetworkConfig:
-    """
-    Legacy network configuration (backwards compatibility).
-
-    New code should use WorkflowConfig from rctbp_bf_training.core.infrastructure.
-    This class is maintained for compatibility with existing code.
-    """
-    summary_dim: int = 10
-    deepset_depth: int = 3
-    deepset_width: int = 64
-    deepset_dropout: float = 0.05
-    flow_depth: int = 7
-    flow_hidden: int = 128
-    flow_dropout: float = 0.20
-
-    def to_workflow_config(self) -> WorkflowConfig:
-        """Convert legacy NetworkConfig to new WorkflowConfig."""
-        return WorkflowConfig(
-            summary_network=SummaryNetworkConfig(
-                summary_dim=self.summary_dim,
-                depth=self.deepset_depth,
-                width=self.deepset_width,
-                dropout=self.deepset_dropout,
-            ),
-            inference_network=InferenceNetworkConfig(
-                depth=self.flow_depth,
-                hidden_sizes=(self.flow_hidden, self.flow_hidden),
-                dropout=self.flow_dropout,
-            ),
-        )
-
-
-def build_networks(config: NetworkConfig | WorkflowConfig) -> tuple:
-    """
-    Legacy function for building networks (backwards compatibility).
-
-    New code should use create_ancova_workflow_components() instead.
-    This function is maintained for compatibility with existing code.
-
-    Parameters
-    ----------
-    config : NetworkConfig or WorkflowConfig
-        Network architecture configuration.
-
-    Returns
-    -------
-    tuple: (summary_net, inference_net)
-    """
-    if isinstance(config, NetworkConfig):
-        # Legacy path: convert to WorkflowConfig
-        workflow_config = config.to_workflow_config()
-    else:
-        workflow_config = config
-
-    summary_net = build_summary_network(workflow_config.summary_network)
-    inference_net = build_inference_network(workflow_config.inference_network)
-
-    return summary_net, inference_net
-
-
-def build_networks_from_params(params: dict) -> tuple:
-    """
-    BO-compatible wrapper: flat dict -> networks (backwards compatibility).
-
-    New code should use params_dict_to_workflow_config() instead.
-    This function is maintained for compatibility with existing code.
-
-    Parameters
-    ----------
-    params : dict
-        Flat dictionary of hyperparameters (from Optuna trial).
-
-    Returns
-    -------
-    tuple: (summary_net, inference_net)
-    """
-    workflow_config = params_dict_to_workflow_config(params)
-    return build_networks(workflow_config)
-
-
-def network_config_from_params(params: dict) -> NetworkConfig:
-    """
-    Convert flat params dict to legacy NetworkConfig (backwards compatibility).
-
-    New code should use params_dict_to_workflow_config() instead.
-
-    Parameters
-    ----------
-    params : dict
-        Flat dictionary of hyperparameters.
-
-    Returns
-    -------
-    NetworkConfig (legacy)
-    """
-    return NetworkConfig(
-        summary_dim=int(params.get("summary_dim", 10)),
-        deepset_depth=int(params.get("deepset_depth", 3)),
-        deepset_width=int(params.get("deepset_width", 64)),
-        deepset_dropout=float(params.get("deepset_dropout", 0.05)),
-        flow_depth=int(params.get("flow_depth", 7)),
-        flow_hidden=int(params.get("flow_hidden", 128)),
-        flow_dropout=float(params.get("flow_dropout", 0.20)),
-    )
-
-
 def create_adapter() -> bf.Adapter:
     """
-    Legacy function for creating adapter (backwards compatibility).
+    Create adapter for ANCOVA 2-arms model.
 
-    New code should use get_ancova_adapter_spec() and the infrastructure's
-    create_adapter() instead. This function is maintained for compatibility
-    with existing code.
+    This is a convenience wrapper that creates an adapter using the
+    ANCOVA adapter specification. It's equivalent to:
+
+        from rctbp_bf_training.core.infrastructure import create_adapter
+        adapter = create_adapter(get_ancova_adapter_spec())
 
     Returns
     -------
     bf.Adapter configured for ANCOVA 2-arms model
+
+    Examples
+    --------
+    >>> adapter = create_adapter()
+    >>> processed = adapter(simulator.sample(100))
     """
     from rctbp_bf_training.core.infrastructure import create_adapter as build_adapter
     return build_adapter(get_ancova_adapter_spec())
+
+
+def create_ancova_objective(
+    config: ANCOVAConfig,
+    simulator: bf.Simulator,
+    adapter: bf.Adapter,
+    search_space: "HyperparameterSpace",
+    validation_conditions: List[Dict],
+    n_sims: int = 500,
+    n_post_draws: int = 500,
+    rng: np.random.Generator = None,
+) -> Callable:
+    """
+    Create Optuna objective function for ANCOVA model optimization.
+
+    This factory function returns an objective function closure that can be
+    passed directly to `study.optimize()`. The objective function builds,
+    trains, and validates models with different hyperparameters sampled by Optuna.
+
+    Parameters
+    ----------
+    config : ANCOVAConfig
+        ANCOVA configuration with training settings
+    simulator : bf.Simulator
+        BayesFlow simulator for the ANCOVA model
+    adapter : bf.Adapter
+        BayesFlow adapter for data transformation
+    search_space : HyperparameterSpace
+        Search space for hyperparameter sampling
+    validation_conditions : list of dict
+        Conditions grid for validation (from create_validation_grid)
+    n_sims : int, default=500
+        Number of simulations per condition for validation
+    n_post_draws : int, default=500
+        Number of posterior draws per simulation
+    rng : np.random.Generator, optional
+        Random number generator for reproducibility
+
+    Returns
+    -------
+    objective : Callable[[Trial], Tuple[float, int]]
+        Objective function that takes an Optuna trial and returns
+        (calibration_error, parameter_count)
+
+    Examples
+    --------
+    >>> config = ANCOVAConfig()
+    >>> simulator = create_simulator(config, RNG)
+    >>> adapter = create_adapter()
+    >>> search_space = HyperparameterSpace(summary_dim=(4, 16), ...)
+    >>> conditions = create_validation_grid(extended=False)
+    >>>
+    >>> objective = create_ancova_objective(
+    ...     config, simulator, adapter, search_space, conditions
+    ... )
+    >>> study.optimize(objective, n_trials=30)
+    """
+    from rctbp_bf_training.core.infrastructure import (
+        params_dict_to_workflow_config,
+        build_summary_network,
+        build_inference_network,
+    )
+    from rctbp_bf_training.core.optimization import (
+        sample_hyperparameters,
+        get_param_count,
+        extract_objective_values,
+        cleanup_trial,
+    )
+    from rctbp_bf_training.core.validation import (
+        run_validation_pipeline,
+        make_bayesflow_infer_fn,
+    )
+    from rctbp_bf_training.core.utils import MovingAverageEarlyStopping
+    import gc
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    def objective(trial):
+        """Optuna objective: returns (calibration_error, param_count)."""
+        import keras
+
+        # Sample hyperparameters
+        params = sample_hyperparameters(trial, search_space)
+
+        # Convert to WorkflowConfig and build networks
+        workflow_config = params_dict_to_workflow_config(params)
+        summary_net = build_summary_network(workflow_config.summary_network)
+        inference_net = build_inference_network(workflow_config.inference_network)
+
+        # Setup learning rate schedule
+        steps_per_epoch = params["batch_size"] * 100
+        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=params["initial_lr"],
+            decay_steps=steps_per_epoch,
+            decay_rate=params["decay_rate"],
+            staircase=True,
+        )
+        opt = keras.optimizers.Adam(learning_rate=lr_schedule)
+
+        # Create workflow
+        wf = bf.BasicWorkflow(
+            simulator=simulator,
+            adapter=adapter,
+            inference_network=inference_net,
+            summary_network=summary_net,
+            optimizer=opt,
+            inference_conditions=["N", "p_alloc", "prior_df", "prior_scale"],
+            checkpoint_name=f"optuna_trial_{trial.number}",
+        )
+
+        try:
+            wf.approximator.compile(optimizer=opt)
+        except Exception:
+            pass
+
+        early_stop = MovingAverageEarlyStopping(
+            window=params["window"],
+            patience=params["patience"],
+            restore_best_weights=True,
+        )
+
+        # Train
+        try:
+            history = wf.fit_online(
+                epochs=config.workflow.training.epochs,
+                batch_size=params["batch_size"],
+                num_batches_per_epoch=config.workflow.training.batches_per_epoch,
+                validation_data=config.workflow.training.validation_sims,
+                callbacks=[early_stop],
+            )
+        except Exception as e:
+            print(f"Trial {trial.number} FAILED: {e}")
+            cleanup_trial()
+            return 1.0, 1e9
+
+        param_count = get_param_count(wf.approximator)
+
+        # Validate
+        simulate_fn_opt = make_simulate_fn(rng=rng)
+        infer_fn_opt = make_bayesflow_infer_fn(
+            wf.approximator,
+            param_key="b_group",
+            data_keys=["outcome", "covariate", "group"],
+            context_keys={"N": int, "p_alloc": float, "prior_df": float, "prior_scale": float},
+        )
+
+        try:
+            results = run_validation_pipeline(
+                conditions_list=validation_conditions,
+                n_sims=n_sims,
+                n_post_draws=n_post_draws,
+                simulate_fn=simulate_fn_opt,
+                infer_fn=infer_fn_opt,
+                true_param_key="b_arm_treat",
+                verbose=False,
+            )
+            cal_error, _ = extract_objective_values(results["metrics"], param_count)
+        except Exception as e:
+            print(f"Trial {trial.number} validation FAILED: {e}")
+            cal_error = 1.0
+
+        print(f"Trial {trial.number}: cal_error={cal_error:.4f}, params={param_count:,}")
+
+        cleanup_trial()
+        del wf, summary_net, inference_net
+        gc.collect()
+
+        return cal_error, param_count
+
+    return objective
 
 
 # =============================================================================
