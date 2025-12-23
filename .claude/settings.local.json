@@ -18,7 +18,11 @@
       "Bash(venv\\\\Scripts\\\\python.exe -m pip install:*)",
       "Bash(./venv/Scripts/python.exe -m pip:*)",
       "Bash(cat:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(venv\\\\Scripts\\\\python.exe -m jupyter nbconvert:*)",
+      "Bash(./venv-py312/Scripts/python.exe:*)",
+      "Bash(../venv-py312/Scripts/python.exe -m jupyter nbconvert:*)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Matze\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Matze-Documents-GitHub-rctbp-bf-training\\\\tasks\\\\b317c14.output\" -Tail 50)"
     ]
   }
 }

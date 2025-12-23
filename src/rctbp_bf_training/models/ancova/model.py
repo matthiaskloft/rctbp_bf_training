@@ -12,10 +12,13 @@ Generic infrastructure has been extracted to rctbp_bf_training.core.infrastructu
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import Callable
+from typing import Callable, TYPE_CHECKING, Any, List, Dict
 
 import numpy as np
 import bayesflow as bf
+
+if TYPE_CHECKING:
+    from bayesflow import Simulator, Adapter
 
 from rctbp_bf_training.core.utils import sample_t_or_normal, loguniform_int
 from rctbp_bf_training.core.infrastructure import (
@@ -396,7 +399,7 @@ def create_simulator(config: ANCOVAConfig, rng: np.random.Generator = None) -> b
     return create_generic_simulator(prior_fn, likelihood_fn, meta_fn)
 
 
-def create_adapter() -> bf.Adapter:
+def create_ancova_adapter() -> "Adapter":
     """
     Create adapter for ANCOVA 2-arms model.
 
@@ -408,21 +411,21 @@ def create_adapter() -> bf.Adapter:
 
     Returns
     -------
-    bf.Adapter configured for ANCOVA 2-arms model
+    Adapter configured for ANCOVA 2-arms model
 
     Examples
     --------
-    >>> adapter = create_adapter()
+    >>> adapter = create_ancova_adapter()
     >>> processed = adapter(simulator.sample(100))
     """
-    from rctbp_bf_training.core.infrastructure import create_adapter as build_adapter
-    return build_adapter(get_ancova_adapter_spec())
+    from rctbp_bf_training.core.infrastructure import create_adapter
+    return create_adapter(get_ancova_adapter_spec())
 
 
 def create_ancova_objective(
     config: ANCOVAConfig,
-    simulator: bf.Simulator,
-    adapter: bf.Adapter,
+    simulator: "Simulator",
+    adapter: "Adapter",
     search_space: "HyperparameterSpace",
     validation_conditions: List[Dict],
     n_sims: int = 500,
@@ -439,9 +442,9 @@ def create_ancova_objective(
     ----------
     config : ANCOVAConfig
         ANCOVA configuration with training settings
-    simulator : bf.Simulator
+    simulator : Simulator
         BayesFlow simulator for the ANCOVA model
-    adapter : bf.Adapter
+    adapter : Adapter
         BayesFlow adapter for data transformation
     search_space : HyperparameterSpace
         Search space for hyperparameter sampling
@@ -464,7 +467,7 @@ def create_ancova_objective(
     --------
     >>> config = ANCOVAConfig()
     >>> simulator = create_simulator(config, RNG)
-    >>> adapter = create_adapter()
+    >>> adapter = create_ancova_adapter()
     >>> search_space = HyperparameterSpace(summary_dim=(4, 16), ...)
     >>> conditions = create_validation_grid(extended=False)
     >>>
@@ -499,8 +502,8 @@ def create_ancova_objective(
 # =============================================================================
 
 def create_ancova_training_functions(
-    simulator: bf.Simulator,
-    adapter: bf.Adapter,
+    simulator: "Simulator",
+    adapter: "Adapter",
     validation_conditions: List[Dict],
     rng: np.random.Generator,
 ) -> tuple[Callable, Callable, Callable]:
@@ -513,9 +516,9 @@ def create_ancova_training_functions(
 
     Parameters
     ----------
-    simulator : bf.Simulator
+    simulator : Simulator
         BayesFlow simulator for the ANCOVA model
-    adapter : bf.Adapter
+    adapter : Adapter
         BayesFlow adapter for data transformation
     validation_conditions : list of dict
         Conditions grid for validation (typically from create_validation_grid(extended=True))
@@ -533,7 +536,7 @@ def create_ancova_training_functions(
     --------
     >>> config = ANCOVAConfig()
     >>> simulator = create_simulator(config, RNG)
-    >>> adapter = create_adapter()
+    >>> adapter = create_ancova_adapter()
     >>> conditions = create_validation_grid(extended=True)
     >>>
     >>> build_fn, train_fn, validate_fn = create_ancova_training_functions(
@@ -586,6 +589,12 @@ def create_ancova_training_functions(
 
     def train_fn(workflow):
         """Train the workflow."""
+        # Compile the approximator (required before training)
+        try:
+            workflow.approximator.compile(optimizer=workflow.optimizer)
+        except Exception:
+            pass  # Already compiled
+
         early_stop = MovingAverageEarlyStopping(
             window=10, patience=10, restore_best_weights=True
         )
