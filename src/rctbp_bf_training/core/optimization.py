@@ -385,18 +385,18 @@ class HyperparameterSpace:
     """
     # DeepSet
     summary_dim: Tuple[int, int] = (4, 16)
-    deepset_width: Tuple[int, int] = (32, 96)
-    deepset_depth: Tuple[int, int] = (1, 3)
-    deepset_dropout: Tuple[float, float] = (0.0, 0.15)
+    deepset_width: Tuple[int, int] = (32, 128)
+    deepset_depth: Tuple[int, int] = (1, 4)
+    deepset_dropout: Tuple[float, float] = (0.0, 0.3)
     
     # CouplingFlow
-    flow_depth: Tuple[int, int] = (3, 8)
+    flow_depth: Tuple[int, int] = (2, 8)
     flow_hidden: Tuple[int, int] = (32, 128)
-    flow_dropout: Tuple[float, float] = (0.05, 0.25)
+    flow_dropout: Tuple[float, float] = (0.05, 0.3)
     
     # Training
     initial_lr: Tuple[float, float] = (1e-4, 5e-3)
-    batch_size: Tuple[int, int] = (128, 384)
+    batch_size: Tuple[int, int] = (64, 1024)
     
     # Fixed values (not optimized)
     decay_rate: float = 0.85
