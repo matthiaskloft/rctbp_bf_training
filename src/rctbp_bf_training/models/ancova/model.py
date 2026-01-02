@@ -653,10 +653,10 @@ def create_validation_grid(extended: bool = False) -> list[dict]:
         # Extended grid for final validation
         conditions = []
         for idx, (n, pdf, psc, b_cov, b_grp, p_alloc) in enumerate(product(
-            [20, 1000],          # N extremes
+            [20, 200, 1000],          # N extremes
             [0, 2],              # prior_df: Normal vs low-df t
             [0.1, 5.0],          # prior_scale extremes
-            [-0.5, 0.5],         # b_covariate
+            [-1.0, 1.0],         # b_covariate
             [0.0, 0.3, 1.0],     # b_group: null, small, large
             [0.5, 0.9],          # p_alloc
         )):
@@ -674,7 +674,7 @@ def create_validation_grid(extended: bool = False) -> list[dict]:
         conditions = []
         for idx, (n, pdf, psc, b_grp) in enumerate(product(
             [20, 500],           # N extremes
-            [0, 10],             # prior_df: Normal vs moderate t
+            [0, 3],             # prior_df: Normal vs moderate t
             [0.5, 5.0],          # prior_scale extremes
             [0.0, 0.5],          # b_group: null vs moderate
         )):
