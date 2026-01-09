@@ -182,3 +182,11 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Models (keep .gitkeep)
+models/*
+!models/.gitkeep
+
+# Docker
+*.tar
+docker-compose.override.yml

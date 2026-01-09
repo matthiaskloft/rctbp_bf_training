@@ -1,0 +1,84 @@
+# Fluence Network Deployment Configuration
+# RCTBP BayesFlow Training Service
+#
+# This configuration defines how to deploy the RCTBP BayesFlow
+# Training API on Fluence Network's decentralized compute.
+
+version: "1.0"
+
+# Service metadata
+service:
+  name: rctbp-bf-training
+  description: "RCT Bayesian Power Training API using Neural Posterior Estimation"
+  version: "0.1.0"
+
+# Container configuration
+container:
+  # Docker image (build and push to a registry first)
+  image: "${DOCKER_REGISTRY:-docker.io}/rctbp-bf-training:${VERSION:-latest}"
+
+  # Build context (for local builds)
+  build:
+    context: .
+    dockerfile: Dockerfile
+
+  # Resource requirements
+  resources:
+    cpu: "1"
+    memory: "2Gi"
+    # GPU not required (CPU inference)
+    gpu: false
+
+  # Environment variables
+  env:
+    KERAS_BACKEND: "torch"
+    PORT: "8000"
+    HOST: "0.0.0.0"
+    MODEL_PATH: "/models/default"
+    CORS_ORIGINS: "*"
+
+  # Port mapping
+  ports:
+    - containerPort: 8000
+      protocol: TCP
+
+  # Health check configuration
+  healthcheck:
+    path: /health
+    port: 8000
+    interval: 30
+    timeout: 10
+    retries: 3
+
+  # Volume mounts for models
+  volumes:
+    - name: models
+      mountPath: /models
+      readOnly: true
+
+# Scaling configuration
+scaling:
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilization: 70
+
+# Network configuration
+network:
+  # Expose service externally
+  ingress:
+    enabled: true
+    path: /
+    # Custom domain (optional)
+    # host: rctbp.example.com
+
+# Deployment options
+deployment:
+  # Preferred compute provider regions
+  regions:
+    - europe
+    - north-america
+
+  # Minimum provider requirements
+  requirements:
+    minUptime: 99.0
+    maxLatency: 100  # ms

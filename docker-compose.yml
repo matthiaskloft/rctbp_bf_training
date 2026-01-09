@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Main API service
+  rctbp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rctbp-bf-training:latest
+    container_name: rctbp-api
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - KERAS_BACKEND=torch
+      - MODEL_PATH=/models/default
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - PORT=8000
+      - HOST=0.0.0.0
+    volumes:
+      # Mount models directory for persistence
+      - ./models:/models:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # Development service with hot-reload
+  rctbp-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: rctbp-bf-training:dev
+    container_name: rctbp-dev
+    ports:
+      - "${DEV_PORT:-8001}:8000"
+    environment:
+      - KERAS_BACKEND=torch
+      - MODEL_PATH=/models/default
+      - CORS_ORIGINS=*
+    volumes:
+      # Mount source code for hot-reload
+      - ./src:/app/src:ro
+      - ./api:/app/api:ro
+      - ./models:/models:ro
+    profiles:
+      - dev
+    restart: "no"
+
+networks:
+  default:
+    name: rctbp-network
+
+volumes:
+  models:
+    driver: local

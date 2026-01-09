@@ -46,6 +46,11 @@ notebooks = [
     "ipykernel>=6.0",
     "notebook>=7.0",
 ]
+api = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "pydantic>=2.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/matthiaskloft/rctbp_bf_training"
