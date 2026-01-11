@@ -1,0 +1,92 @@
+# Docker Compose configuration for NPE training on Fluence.network
+# Optimized for interactive Bayesian optimization with GPU support
+
+services:
+  npe-training:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rctbp-bf-training:latest
+    container_name: npe-training
+
+    # GPU access via NVIDIA Container Toolkit
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Environment variables
+    environment:
+      - KERAS_BACKEND=torch
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # Optuna settings
+      - OPTUNA_STORAGE=sqlite:////app/data/optuna_studies.db
+      # Jupyter settings (can be overridden)
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-}
+
+    # Port mapping
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+
+    # Volume mounts for persistence
+    volumes:
+      # Persist Optuna databases and trained models
+      - ./data:/app/data
+      - ./models:/app/models
+      # Mount notebooks for editing (optional, can be removed for immutable deployment)
+      - ./examples:/app/examples
+
+    # Working directory
+    working_dir: /app
+
+    # Resource limits (adjust based on Fluence node capabilities)
+    # Uncomment and adjust as needed:
+    # mem_limit: 16g
+    # memswap_limit: 16g
+    # cpus: 4
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional: CPU-only variant for development/testing
+  npe-training-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: rctbp-bf-training:cpu
+    container_name: npe-training-cpu
+    profiles:
+      - cpu  # Only start with: docker compose --profile cpu up
+
+    environment:
+      - KERAS_BACKEND=torch
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-}
+
+    ports:
+      - "${JUPYTER_PORT_CPU:-8889}:8888"
+
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./examples:/app/examples
+
+    working_dir: /app
+    restart: unless-stopped
+
+# Named volumes (alternative to bind mounts)
+# Uncomment to use Docker-managed volumes instead of bind mounts
+# volumes:
+#   npe-data:
+#   npe-models:
