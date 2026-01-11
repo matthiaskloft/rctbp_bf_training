@@ -74,25 +74,26 @@ def create_study(
     """
     Create or load an Optuna study for hyperparameter optimization.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     study_name : str
         Name of the study (used for storage/resumption)
     directions : list of str
         Optimization directions. Default: ["minimize", "minimize"]
-        for (calibration_error, param_count)
+        for (calibration_error, normalized_param_score)
     storage : str, optional
         SQLite URL for persistence. Example: "sqlite:///optuna_study.db"
         If None, study is in-memory only.
     load_if_exists : bool
         If True, resume existing study with same name
     sampler : optuna.samplers.BaseSampler, optional
-        Custom sampler. Default: NSGAIISampler for multi-objective
+        Custom sampler. Default: MOTPESampler for multi-objective (better
+        sample efficiency than NSGA-II for 50-200 trials)
     pruner : optuna.pruners.BasePruner, optional
         Custom pruner for early stopping of bad trials
         
-    Returns:
-    --------
+    Returns
+    -------
     optuna.Study
     """
     if not OPTUNA_AVAILABLE:
@@ -101,11 +102,19 @@ def create_study(
     if directions is None:
         directions = ["minimize", "minimize"]
     
-    # Default sampler for multi-objective
+    # Default sampler: MOTPE for multi-objective (better sample efficiency)
     if sampler is None and len(directions) > 1:
-        sampler = optuna.samplers.NSGAIISampler(seed=42)
+        sampler = optuna.samplers.TPESampler(
+            seed=42,
+            multivariate=True,      # Model parameter dependencies
+            n_startup_trials=10,    # Random trials before modeling
+        )
     elif sampler is None:
-        sampler = optuna.samplers.TPESampler(seed=42)
+        sampler = optuna.samplers.TPESampler(
+            seed=42,
+            multivariate=True,
+            n_startup_trials=10,
+        )
     
     # Default pruner (median-based)
     if pruner is None:
@@ -274,6 +283,62 @@ def compute_composite_objective(
     return float(composite)
 
 
+# =============================================================================
+# OBJECTIVE NORMALIZATION
+# =============================================================================
+
+# Normalization constant: log10(1,000,000) = 6
+# Maps param_count to ~0-1 scale: 10K -> 0.67, 100K -> 0.83, 1M -> 1.0
+PARAM_COUNT_LOG_SCALE = 6.0
+
+# Failed trial penalty (normalized scale)
+FAILED_TRIAL_CAL_ERROR = 1.0
+FAILED_TRIAL_PARAM_SCORE = 1.5  # Above any valid normalized value
+
+
+def normalize_param_count(param_count: int) -> float:
+    """
+    Normalize parameter count to ~0-1 scale using log10.
+    
+    Maps parameter counts to a comparable scale with calibration error:
+    - 10,000 params -> ~0.67
+    - 100,000 params -> ~0.83
+    - 1,000,000 params -> 1.0
+    
+    Parameters
+    ----------
+    param_count : int
+        Raw parameter count
+        
+    Returns
+    -------
+    float
+        Normalized score in ~0-1 range
+    """
+    if param_count <= 0:
+        return 0.0
+    return np.log10(param_count) / PARAM_COUNT_LOG_SCALE
+
+
+def denormalize_param_count(normalized: float) -> int:
+    """
+    Convert normalized param score back to raw parameter count.
+    
+    Parameters
+    ----------
+    normalized : float
+        Normalized parameter score
+        
+    Returns
+    -------
+    int
+        Raw parameter count
+    """
+    if normalized <= 0:
+        return 0
+    return int(10 ** (normalized * PARAM_COUNT_LOG_SCALE))
+
+
 def extract_objective_values(
     metrics: Dict,
     param_count: int,
@@ -281,32 +346,31 @@ def extract_objective_values(
     """
     Extract objective values for multi-objective optimization.
     
-    Returns (calibration_error, param_count) for Pareto optimization.
+    Returns (calibration_error, normalized_param_score) for Pareto optimization.
+    Both objectives are normalized to [0, 1] scale for balanced NSGA-II crowding.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     metrics : dict
         Metrics dict from validation pipeline
     param_count : int
         Number of trainable parameters
         
-    Returns:
-    --------
-    tuple : (calibration_error, param_count)
+    Returns
+    -------
+    tuple
+        (calibration_error, normalized_param_score) both in [0, 1] range
     """
     summary = metrics.get("summary", metrics)
     
     # Primary calibration metric: mean absolute calibration error
+    # Already bounded [0, 1] - no transformation needed
     cal_error = summary.get("mean_cal_error", 1.0)
     
-    # Could also incorporate SBC
-    c2st = summary.get("sbc_c2st_accuracy", 0.5)
-    sbc_penalty = abs(c2st - 0.5)
+    # Normalize param_count to comparable [0, 1] scale
+    normalized_params = normalize_param_count(param_count)
     
-    # Combined calibration score
-    calibration = cal_error + 0.5 * sbc_penalty
-    
-    return float(calibration), int(param_count)
+    return float(cal_error), float(normalized_params)
 
 
 # =============================================================================
@@ -580,7 +644,10 @@ def summarize_best_trials(
         if isinstance(trial.values, (list, tuple)):
             record["cal_error"] = trial.values[0]
             if len(trial.values) > 1:
-                record["param_count"] = int(trial.values[1])
+                # Denormalize param_count for human-readable display
+                normalized_params = trial.values[1]
+                record["param_count"] = denormalize_param_count(normalized_params)
+                record["param_score"] = normalized_params  # Keep normalized for reference
         else:
             record["objective"] = trial.value
         
@@ -627,14 +694,16 @@ def plot_optimization_results(
         trials_df = trials_to_dataframe(study)
         if "objective_0" in trials_df.columns and "objective_1" in trials_df.columns:
             # Filter out failed trials (those with penalty values)
-            # Failed trials have cal_error=1.0 and param_count=1e9
-            valid_mask = (trials_df["objective_0"] < 1.0) & (trials_df["objective_1"] < 1e8)
+            # Failed trials have cal_error >= 1.0 and param_score >= 1.5 (normalized)
+            valid_mask = (trials_df["objective_0"] < FAILED_TRIAL_CAL_ERROR) & (trials_df["objective_1"] < FAILED_TRIAL_PARAM_SCORE)
             valid_df = trials_df[valid_mask]
             
             if len(valid_df) > 0:
+                # Denormalize param_count for display
+                denorm_params = valid_df["objective_1"].apply(denormalize_param_count)
                 ax.scatter(
                     valid_df["objective_0"],
-                    valid_df["objective_1"],
+                    denorm_params,
                     alpha=0.5,
                     label=f"Successful trials ({len(valid_df)})",
                 )
@@ -648,8 +717,8 @@ def plot_optimization_results(
             
             # Highlight Pareto front (filter valid ones)
             pareto = study.best_trials
-            pareto_obj0 = [t.values[0] for t in pareto if t.values[0] < 1.0 and t.values[1] < 1e8]
-            pareto_obj1 = [t.values[1] for t in pareto if t.values[0] < 1.0 and t.values[1] < 1e8]
+            pareto_obj0 = [t.values[0] for t in pareto if t.values[0] < FAILED_TRIAL_CAL_ERROR and t.values[1] < FAILED_TRIAL_PARAM_SCORE]
+            pareto_obj1 = [denormalize_param_count(t.values[1]) for t in pareto if t.values[0] < FAILED_TRIAL_CAL_ERROR and t.values[1] < FAILED_TRIAL_PARAM_SCORE]
             if pareto_obj0:
                 ax.scatter(
                     pareto_obj0, pareto_obj1,
@@ -660,7 +729,7 @@ def plot_optimization_results(
             
             ax.set_xlabel("Calibration Error")
             ax.set_ylabel("Parameter Count")
-            ax.set_title("Pareto Front")
+            ax.set_title("Pareto Front (normalized internally)")
             ax.legend()
     else:
         # Single objective: plot optimization history
@@ -754,33 +823,44 @@ def plot_pareto_front(
                 ha='center', va='center', transform=ax.transAxes)
         return ax
     
-    # All trials
-    ax.scatter(
-        trials_df["objective_0"],
-        trials_df["objective_1"],
-        alpha=0.4,
-        s=50,
-        label="All trials",
-    )
+    # Filter valid trials and denormalize for display
+    valid_mask = (trials_df["objective_0"] < FAILED_TRIAL_CAL_ERROR) & (trials_df["objective_1"] < FAILED_TRIAL_PARAM_SCORE)
+    valid_df = trials_df[valid_mask]
+    
+    if len(valid_df) > 0:
+        denorm_params = valid_df["objective_1"].apply(denormalize_param_count)
+        ax.scatter(
+            valid_df["objective_0"],
+            denorm_params,
+            alpha=0.4,
+            s=50,
+            label="All trials",
+        )
     
     if highlight_best:
         pareto = study.best_trials
-        pareto_obj0 = [t.values[0] for t in pareto]
-        pareto_obj1 = [t.values[1] for t in pareto]
+        # Filter and denormalize Pareto front
+        valid_pareto = [(t.values[0], denormalize_param_count(t.values[1])) 
+                        for t in pareto 
+                        if t.values[0] < FAILED_TRIAL_CAL_ERROR and t.values[1] < FAILED_TRIAL_PARAM_SCORE]
         
-        # Sort for line plot
-        sorted_idx = np.argsort(pareto_obj0)
-        pareto_obj0 = np.array(pareto_obj0)[sorted_idx]
-        pareto_obj1 = np.array(pareto_obj1)[sorted_idx]
-        
-        ax.plot(pareto_obj0, pareto_obj1, 'r--', alpha=0.7, linewidth=2)
-        ax.scatter(
-            pareto_obj0, pareto_obj1,
-            c='red', s=150, marker='*',
-            label="Pareto front",
-            zorder=10,
-            edgecolors='black',
-        )
+        if valid_pareto:
+            pareto_obj0 = [p[0] for p in valid_pareto]
+            pareto_obj1 = [p[1] for p in valid_pareto]
+            
+            # Sort for line plot
+            sorted_idx = np.argsort(pareto_obj0)
+            pareto_obj0 = np.array(pareto_obj0)[sorted_idx]
+            pareto_obj1 = np.array(pareto_obj1)[sorted_idx]
+            
+            ax.plot(pareto_obj0, pareto_obj1, 'r--', alpha=0.7, linewidth=2)
+            ax.scatter(
+                pareto_obj0, pareto_obj1,
+                c='red', s=150, marker='*',
+                label="Pareto front",
+                zorder=10,
+                edgecolors='black',
+            )
     
     ax.set_xlabel("Calibration Error", fontsize=12)
     ax.set_ylabel("Parameter Count", fontsize=12)
@@ -1045,7 +1125,7 @@ def create_optimization_objective(
         except Exception as e:
             print(f"Trial {trial.number} FAILED: {e}")
             cleanup_trial()
-            return 1.0, 1e9
+            return FAILED_TRIAL_CAL_ERROR, FAILED_TRIAL_PARAM_SCORE
 
         param_count = get_param_count(wf.approximator)
 
@@ -1068,18 +1148,19 @@ def create_optimization_objective(
                 true_param_key=true_param_key,
                 verbose=False,
             )
-            cal_error, _ = extract_objective_values(results["metrics"], param_count)
+            cal_error, normalized_params = extract_objective_values(results["metrics"], param_count)
         except Exception as e:
             print(f"Trial {trial.number} validation FAILED: {e}")
-            cal_error = 1.0
+            cal_error = FAILED_TRIAL_CAL_ERROR
+            normalized_params = FAILED_TRIAL_PARAM_SCORE
 
-        print(f"Trial {trial.number}: cal_error={cal_error:.4f}, params={param_count:,}")
+        print(f"Trial {trial.number}: cal_error={cal_error:.4f}, params={param_count:,} (normalized={normalized_params:.3f})")
 
         cleanup_trial()
         del wf, summary_net, inference_net
         gc.collect()
 
-        return cal_error, param_count
+        return cal_error, normalized_params
 
     return objective
 
