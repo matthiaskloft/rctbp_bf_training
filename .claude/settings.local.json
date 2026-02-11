@@ -25,7 +25,9 @@
       "Bash(Get-Content \"C:\\\\Users\\\\Matze\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Matze-Documents-GitHub-rctbp-bf-training\\\\tasks\\\\b317c14.output\" -Tail 50)",
       "Bash(dir:*)",
       "Bash(findstr:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)"
     ]
   }
 }

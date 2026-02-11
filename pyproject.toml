@@ -46,7 +46,7 @@ notebooks = [
     "ipykernel>=6.0",
     "notebook>=7.0",
 ]
-calibration = ["bayesflow-calibration>=0.1"]
+calibration = ["bayesflow-calibration @ git+https://github.com/matthiaskloft/bfcalloss.git"]
 
 [project.urls]
 Homepage = "https://github.com/matthiaskloft/rctbp_bf_training"

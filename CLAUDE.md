@@ -74,14 +74,6 @@ rctbp_bf_training/
 │   └── plotting/
 │       └── diagnostics.py              # SBC diagnostic plots
 │
-├── bayesflow-calibration/              # Add-on: differentiable calibration loss
-│   ├── src/bayesflow_calibration/
-│   │   ├── approximator.py             # CalibratedContinuousApproximator
-│   │   ├── losses.py                   # Calibration loss (STE, ranks, coverage)
-│   │   ├── schedules.py                # Gamma weight scheduling
-│   │   └── diagnostics.py              # Training monitor callbacks
-│   └── tests/
-│
 ├── tests/                              # Mirror structure of src/
 │   ├── test_core/
 │   ├── test_models/test_ancova/
@@ -89,6 +81,7 @@ rctbp_bf_training/
 │
 ├── examples/                           # Jupyter notebooks
 │   ├── ancova_basic.ipynb              # Basic ANCOVA training
+│   ├── ancova_calibration_loss.ipynb   # Calibration loss training comparison
 │   └── ancova_optimization.ipynb       # Optuna hyperparameter optimization
 │
 ├── scripts/
@@ -117,7 +110,7 @@ rctbp_bf_training/
 - **Generic core + model-specific implementations**: `core/` is model-agnostic; `models/ancova/` contains ANCOVA-specific code
 - **Configuration via dataclasses**: All configs use typed dataclasses with defaults
 - **Multi-objective optimization**: Optuna studies optimize (calibration_error, param_count) on a Pareto front
-- **Add-on package pattern**: `bayesflow-calibration` is a standalone package extending BayesFlow
+- **External calibration loss**: `bayesflow-calibration` ([bfcalloss](https://github.com/matthiaskloft/bfcalloss)) is a separate repo, installed via `pip install -e ".[calibration]"`
 
 ### Conventions
 - Type hints throughout (enforced by mypy)
