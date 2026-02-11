@@ -12,118 +12,79 @@ with Simulation-Based Calibration"
 import io
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Union, List, Dict
+from typing import Optional, Tuple, Union, List, Dict
 from scipy import stats as scipy_stats
 from matplotlib.ticker import PercentFormatter
 import pandas as pd
 from PIL import Image
 
 
-def plot_coverage_diff(
-    estimates: np.ndarray,
-    targets: np.ndarray,
-    variable_name: str = "Parameter",
-    prob: float = 0.95,
-    max_points: int = 50,
-    ax: Optional[plt.Axes] = None
-) -> plt.Figure:
+# =============================================================================
+# GRID LAYOUT HELPER
+# =============================================================================
+
+def _create_condition_grid(
+    n_conditions: int,
+    max_conditions: int = 16,
+    max_cols: int = 4,
+    figsize_per_plot: Tuple[float, float] = (3.0, 3.0),
+) -> Tuple[plt.Figure, np.ndarray, int, int, int]:
     """
-    Plot coverage difference (observed - expected) with Wilson score intervals.
-    
-    Parameters:
-    -----------
-    estimates : array of shape (n_sims, n_draws, n_params)
-        Posterior draws for each simulation
-    targets : array of shape (n_sims, n_params)
-        True parameter values
-    variable_name : str
-        Name of the variable for title
-    prob : float
-        Confidence level for Wilson score interval
-    max_points : int
-        Number of coverage levels to evaluate
-    ax : matplotlib Axes, optional
-        Axes to plot on. If None, creates new figure.
-        
-    Returns:
-    --------
-    matplotlib Figure (or Axes if ax provided)
+    Create a subplot grid for condition-level plots.
+
+    Handles grid sizing, axes normalization, and returns the actual
+    number of conditions to plot (capped at max_conditions).
+
+    Parameters
+    ----------
+    n_conditions : int
+        Total number of conditions available.
+    max_conditions : int
+        Maximum number of conditions to plot.
+    max_cols : int
+        Maximum number of columns in the grid.
+    figsize_per_plot : tuple of (float, float)
+        Size per subplot (width, height).
+
+    Returns
+    -------
+    tuple of (fig, axes_2d, n_conds, n_rows, n_cols)
+        fig : matplotlib Figure
+        axes_2d : 2D ndarray of Axes
+        n_conds : actual number of conditions to plot
+        n_rows : number of grid rows
+        n_cols : number of grid columns
     """
-    n_sims = estimates.shape[0]
-    widths = np.linspace(0, 1, max_points)
+    n_conds = min(n_conditions, max_conditions)
+    n_cols = min(max_cols, n_conds)
+    n_rows = int(np.ceil(n_conds / n_cols))
 
-    empirical_coverage = []
-    ci_low = []
-    ci_high = []
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows),
+    )
+    if n_conds == 1:
+        axes = np.array([[axes]])
+    axes = np.atleast_2d(axes)
 
-    for width in widths:
-        if width == 0:
-            empirical_coverage.append(0)
-            ci_low.append(0)
-            ci_high.append(0)
-            continue
-        if width == 1:
-            empirical_coverage.append(1)
-            ci_low.append(1)
-            ci_high.append(1)
-            continue
+    return fig, axes, n_conds, n_rows, n_cols
 
-        alpha = 1 - width
-        lower_q = alpha / 2
-        upper_q = 1 - alpha / 2
 
-        in_interval = []
-        for i in range(n_sims):
-            lower = np.percentile(estimates[i, :, 0], lower_q * 100)
-            upper = np.percentile(estimates[i, :, 0], upper_q * 100)
-            true_val = targets[i, 0]
-            in_interval.append(lower <= true_val <= upper)
+def _hide_empty_subplots(
+    axes: np.ndarray,
+    n_used: int,
+    n_rows: int,
+    n_cols: int,
+) -> None:
+    """Hide unused subplots in a grid."""
+    for idx in range(n_used, n_rows * n_cols):
+        row, col = divmod(idx, n_cols)
+        axes[row, col].set_visible(False)
 
-        coverage = np.mean(in_interval)
-        empirical_coverage.append(coverage)
 
-        z = scipy_stats.norm.ppf(0.5 + prob / 2)
-        denominator = 1 + z**2 / n_sims
-        center = (coverage + z**2 / (2 * n_sims)) / denominator
-        margin = z * np.sqrt(coverage * (1 - coverage) / n_sims + z**2 / (4 * n_sims**2)) / denominator
-
-        ci_low.append(max(0, center - margin))
-        ci_high.append(min(1, center + margin))
-
-    widths = np.asarray(widths)
-    empirical_coverage = np.asarray(empirical_coverage)
-    ci_low = np.asarray(ci_low)
-    ci_high = np.asarray(ci_high)
-
-    diff = empirical_coverage - widths
-    diff_low = ci_low - widths
-    diff_high = ci_high - widths
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
-    else:
-        fig = ax.get_figure()
-        
-    ax.fill_between(widths, diff_low, diff_high, alpha=0.2, color="grey", label=f"{int(prob*100)}% CI")
-    ax.plot(widths, diff, "o-", color="#132a70", linewidth=2, markersize=4, label="Coverage diff")
-    ax.axhline(0, linestyle="--", color="black", linewidth=1.5, alpha=0.7, zorder=0)
-
-    ax.set_xlabel("Nominal Coverage", fontsize=16)
-    ax.set_ylabel("Observed - Nominal", fontsize=16)
-    ax.set_title(f"Coverage Difference: {variable_name}", fontsize=18)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left", fontsize=14)
-    ax.set_xlim(0, 1)
-
-    max_abs = max(np.max(np.abs(diff_low)), np.max(np.abs(diff_high)), 1e-6)
-    ax.set_ylim(-max_abs * 1.05, max_abs * 1.05)
-
-    ax.xaxis.set_major_formatter(PercentFormatter(1.0))
-    ax.yaxis.set_major_formatter(PercentFormatter(1.0))
-
-    plt.tight_layout()
-    return fig
-
+# =============================================================================
+# DIAGNOSTIC PLOTS
+# =============================================================================
 
 def plot_diagnostic_dashboard(
     estimates: Dict,
@@ -658,19 +619,13 @@ def plot_sbc_by_condition(
             raise ValueError("n_post_draws required when passing DataFrame directly")
 
     conditions = simulation_metrics[condition_col].unique()[:max_conditions]
-    n_conds = len(conditions)
 
-    # Determine grid size
-    n_cols = min(3, n_conds)
-    n_rows = int(np.ceil(n_conds / n_cols))
-
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
-        figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows)
+    fig, axes, n_conds, n_rows, n_cols = _create_condition_grid(
+        len(conditions), max_conditions, max_cols=3,
+        figsize_per_plot=figsize_per_plot,
     )
-    axes = np.atleast_2d(axes)
 
-    for idx, cond_id in enumerate(conditions):
+    for idx, cond_id in enumerate(conditions[:n_conds]):
         row, col = divmod(idx, n_cols)
         ax = axes[row, col]
 
@@ -686,10 +641,7 @@ def plot_sbc_by_condition(
         )
         ax.legend().set_visible(False)  # Hide legend for cleaner grid
 
-    # Hide empty subplots
-    for idx in range(n_conds, n_rows * n_cols):
-        row, col = divmod(idx, n_cols)
-        axes[row, col].set_visible(False)
+    _hide_empty_subplots(axes, n_conds, n_rows, n_cols)
 
     plt.tight_layout()
     return fig
@@ -989,7 +941,6 @@ def plot_recovery_by_condition(
     sim_metrics = metrics["simulation_metrics"]
 
     unique_conds = sim_metrics["id_cond"].unique()[:max_conditions]
-    n_conds = len(unique_conds)
 
     # Compute global axis limits across all conditions for consistent scales
     all_true = sim_metrics["true_value"].values
@@ -999,18 +950,12 @@ def plot_recovery_by_condition(
     margin = (global_max - global_min) * 0.05
     global_lims = [global_min - margin, global_max + margin]
 
-    n_cols = min(4, n_conds)
-    n_rows = int(np.ceil(n_conds / n_cols))
-
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
-        figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows)
+    fig, axes, n_conds, n_rows, n_cols = _create_condition_grid(
+        len(unique_conds), max_conditions,
+        figsize_per_plot=figsize_per_plot,
     )
-    if n_conds == 1:
-        axes = np.array([[axes]])
-    axes = np.atleast_2d(axes)
 
-    for idx, cond_id in enumerate(unique_conds):
+    for idx, cond_id in enumerate(unique_conds[:n_conds]):
         row, col = divmod(idx, n_cols)
         ax = axes[row, col]
 
@@ -1019,29 +964,35 @@ def plot_recovery_by_condition(
         cond_true = cond_data["true_value"].values
 
         # BayesFlow-style scatter: semitransparent points, identity line
-        ax.scatter(cond_true, cond_medians, alpha=0.25, s=12, c='#132a70', edgecolors='none')
+        ax.scatter(
+            cond_true, cond_medians,
+            alpha=0.25, s=12, c='#132a70', edgecolors='none',
+        )
         ax.plot(global_lims, global_lims, 'k--', linewidth=1, alpha=0.8)
         ax.set_xlim(global_lims)
         ax.set_ylim(global_lims)
         ax.set_aspect('equal', adjustable='box')
-        
+
         # Compute correlation for subtitle (BayesFlow shows r, not R²)
         corr = np.corrcoef(cond_true, cond_medians)[0, 1]
         ax.set_title(f"Cond {cond_id}", fontsize=12)
-        ax.text(0.05, 0.95, f'$r$={corr:.2f}', transform=ax.transAxes, 
-                fontsize=10, verticalalignment='top')
-        
+        ax.text(
+            0.05, 0.95, f'$r$={corr:.2f}', transform=ax.transAxes,
+            fontsize=10, verticalalignment='top',
+        )
+
         if row == n_rows - 1:
             ax.set_xlabel("Ground truth", fontsize=10)
         if col == 0:
             ax.set_ylabel("Estimate", fontsize=10)
         ax.tick_params(labelsize=9)
 
-    for idx in range(n_conds, n_rows * n_cols):
-        row, col = divmod(idx, n_cols)
-        axes[row, col].set_visible(False)
+    _hide_empty_subplots(axes, n_conds, n_rows, n_cols)
 
-    fig.suptitle("Recovery by Condition (Posterior Median)", fontsize=12, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Recovery by Condition (Posterior Median)",
+        fontsize=12, fontweight="bold", y=1.02,
+    )
     plt.tight_layout()
     return fig
 
@@ -1078,20 +1029,13 @@ def plot_coverage_by_condition(
     levels = sorted([int(c.split("_")[1]) / 100 for c in coverage_cols])
 
     unique_conds = sim_metrics["id_cond"].unique()[:max_conditions]
-    n_conds = len(unique_conds)
 
-    n_cols = min(4, n_conds)
-    n_rows = int(np.ceil(n_conds / n_cols))
-
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
-        figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows)
+    fig, axes, n_conds, n_rows, n_cols = _create_condition_grid(
+        len(unique_conds), max_conditions,
+        figsize_per_plot=figsize_per_plot,
     )
-    if n_conds == 1:
-        axes = np.array([[axes]])
-    axes = np.atleast_2d(axes)
 
-    for idx, cond_id in enumerate(unique_conds):
+    for idx, cond_id in enumerate(unique_conds[:n_conds]):
         row, col = divmod(idx, n_cols)
         ax = axes[row, col]
 
@@ -1119,7 +1063,12 @@ def plot_coverage_by_condition(
         for cov in empirical_coverage:
             denominator = 1 + z**2 / n_sims
             center = (cov + z**2 / (2 * n_sims)) / denominator
-            margin = z * np.sqrt(cov * (1 - cov) / n_sims + z**2 / (4 * n_sims**2)) / denominator
+            margin = (
+                z * np.sqrt(
+                    cov * (1 - cov) / n_sims
+                    + z**2 / (4 * n_sims**2)
+                ) / denominator
+            )
             ci_low.append(max(0, center - margin))
             ci_high.append(min(1, center + margin))
 
@@ -1128,21 +1077,31 @@ def plot_coverage_by_condition(
         diff_low = ci_low - widths
         diff_high = ci_high - widths
 
-        ax.fill_between(widths, diff_low, diff_high, alpha=0.2, color="grey")
+        ax.fill_between(
+            widths, diff_low, diff_high, alpha=0.2, color="grey",
+        )
         ax.plot(widths, diff, "-", color="#132a70", linewidth=1.5)
-        ax.axhline(0, linestyle="--", color="black", linewidth=1, alpha=0.7, zorder=0)
+        ax.axhline(
+            0, linestyle="--", color="black",
+            linewidth=1, alpha=0.7, zorder=0,
+        )
         ax.set_title(f"Cond {cond_id}", fontsize=12)
         ax.set_xlim(0, 1)
         ax.tick_params(labelsize=9)
 
-        max_abs = max(np.max(np.abs(diff_low)), np.max(np.abs(diff_high)), 0.1)
+        max_abs = max(
+            np.max(np.abs(diff_low)),
+            np.max(np.abs(diff_high)),
+            0.1,
+        )
         ax.set_ylim(-max_abs * 1.1, max_abs * 1.1)
 
-    for idx in range(n_conds, n_rows * n_cols):
-        row, col = divmod(idx, n_cols)
-        axes[row, col].set_visible(False)
+    _hide_empty_subplots(axes, n_conds, n_rows, n_cols)
 
-    fig.suptitle("Coverage Difference by Condition", fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "Coverage Difference by Condition",
+        fontsize=14, fontweight="bold", y=1.02,
+    )
     plt.tight_layout()
     return fig
 
@@ -1184,34 +1143,32 @@ def plot_histogram_by_condition(
     n_post_draws = summary["n_post_draws"]
 
     unique_conds = np.unique(id_cond)[:max_conditions]
-    n_conds = len(unique_conds)
 
-    n_cols = min(4, n_conds)
-    n_rows = int(np.ceil(n_conds / n_cols))
-
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
-        figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows)
+    fig, axes, n_conds, n_rows, n_cols = _create_condition_grid(
+        len(unique_conds), max_conditions,
+        figsize_per_plot=figsize_per_plot,
     )
-    if n_conds == 1:
-        axes = np.array([[axes]])
-    axes = np.atleast_2d(axes)
 
-    for idx, cond_id in enumerate(unique_conds):
+    for idx, cond_id in enumerate(unique_conds[:n_conds]):
         row, col = divmod(idx, n_cols)
         ax = axes[row, col]
 
-        cond_ranks = sim_metrics.loc[sim_metrics["id_cond"] == cond_id, "sbc_rank"].values
+        cond_ranks = sim_metrics.loc[
+            sim_metrics["id_cond"] == cond_id, "sbc_rank"
+        ].values
 
-        plot_sbc_rank_histogram(cond_ranks, n_post_draws, ax=ax,
-                                title=f"Cond {cond_id}", n_bins=n_bins)
+        plot_sbc_rank_histogram(
+            cond_ranks, n_post_draws, ax=ax,
+            title=f"Cond {cond_id}", n_bins=n_bins,
+        )
         ax.legend().set_visible(False)
 
-    for idx in range(n_conds, n_rows * n_cols):
-        row, col = divmod(idx, n_cols)
-        axes[row, col].set_visible(False)
+    _hide_empty_subplots(axes, n_conds, n_rows, n_cols)
 
-    fig.suptitle("SBC Rank Histograms by Condition", fontsize=14, fontweight="bold", y=1.02)
+    fig.suptitle(
+        "SBC Rank Histograms by Condition",
+        fontsize=14, fontweight="bold", y=1.02,
+    )
     plt.tight_layout()
     return fig
 
@@ -1251,29 +1208,26 @@ def plot_ecdf_by_condition(
     n_post_draws = summary["n_post_draws"]
 
     unique_conds = np.unique(id_cond)[:max_conditions]
-    n_conds = len(unique_conds)
 
-    n_cols = min(4, n_conds)
-    n_rows = int(np.ceil(n_conds / n_cols))
-
-    fig, axes = plt.subplots(
-        n_rows, n_cols,
-        figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows)
+    fig, axes, n_conds, n_rows, n_cols = _create_condition_grid(
+        len(unique_conds), max_conditions,
+        figsize_per_plot=figsize_per_plot,
     )
-    if n_conds == 1:
-        axes = np.array([[axes]])
-    axes = np.atleast_2d(axes)
 
-    for idx, cond_id in enumerate(unique_conds):
+    for idx, cond_id in enumerate(unique_conds[:n_conds]):
         row, col = divmod(idx, n_cols)
         ax = axes[row, col]
 
-        cond_ranks = sim_metrics.loc[sim_metrics["id_cond"] == cond_id, "sbc_rank"].values
+        cond_ranks = sim_metrics.loc[
+            sim_metrics["id_cond"] == cond_id, "sbc_rank"
+        ].values
 
         # Use BayesFlow-style ECDF with no legend on subplots
-        plot_sbc_ecdf_diff(cond_ranks, n_post_draws, ax=ax, 
-                          title=f"Cond {cond_id}", show_legend=False)
-        
+        plot_sbc_ecdf_diff(
+            cond_ranks, n_post_draws, ax=ax,
+            title=f"Cond {cond_id}", show_legend=False,
+        )
+
         # Smaller fonts for grid layout
         ax.set_title(f"Cond {cond_id}", fontsize=12)
         ax.set_xlabel("")  # Remove x-labels on inner plots
@@ -1288,10 +1242,11 @@ def plot_ecdf_by_condition(
         if col == 0:
             axes[row, col].set_ylabel("ECDF diff", fontsize=10)
 
-    for idx in range(n_conds, n_rows * n_cols):
-        row, col = divmod(idx, n_cols)
-        axes[row, col].set_visible(False)
+    _hide_empty_subplots(axes, n_conds, n_rows, n_cols)
 
-    fig.suptitle("Calibration ECDF (difference) by Condition", fontsize=14, y=1.02)
+    fig.suptitle(
+        "Calibration ECDF (difference) by Condition",
+        fontsize=14, y=1.02,
+    )
     plt.tight_layout()
     return fig
