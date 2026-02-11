@@ -38,6 +38,8 @@ results = run_validation_pipeline(
 
 import gc
 import time
+import warnings
+
 import numpy as np
 import pandas as pd
 from typing import Callable, Dict, List, Any, Optional, Union
@@ -595,12 +597,20 @@ def extract_calibration_metrics(
         - simulation_metrics: DataFrame with per-simulation metrics
         - summary: dict with overall metrics
     """
+    warnings.warn(
+        "extract_calibration_metrics() is deprecated. "
+        "Use run_validation_pipeline() instead, which computes the "
+        "same metrics incrementally with lower memory usage.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     if coverage_levels is None:
         coverage_levels = [0.50, 0.80, 0.90, 0.95, 0.99]
-    
+
     # Full coverage profile for plotting (1% to 99% in 1% steps)
     full_coverage_levels = [i / 100 for i in range(1, 100)]
-    
+
     id_cond = results_dict["id_cond"]
     id_sim = results_dict["id_sim"]
     draws = results_dict["draws"]
@@ -814,7 +824,7 @@ def extract_calibration_metrics(
     # Condition summary: aggregate statistics across conditions (metrics only)
     # Exclude id, counts, and condition grid parameters
     numeric_cols = cond_metrics.select_dtypes(include=[np.number]).columns.tolist()
-    sample_cond = conditions_list[0] if conditions_list else {}
+    sample_cond = condition_grid[0] if condition_grid else {}
     cond_param_keys = [k for k in sample_cond.keys() if k not in ('id', 'id_cond')]
     exclude_cols = ['id_cond', 'n_sims', 'true_value'] + cond_param_keys
     summary_cols = [c for c in numeric_cols if c not in exclude_cols]
