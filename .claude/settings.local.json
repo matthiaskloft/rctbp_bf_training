@@ -27,7 +27,28 @@
       "Bash(findstr:*)",
       "Bash(git ls-tree:*)",
       "Bash(wc:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git worktree add:*)",
+      "Bash(pip show:*)",
+      "Bash(\"C:\\\\Users\\\\Matze\\\\Documents\\\\GitHub\\\\rctbp_bf_training\\\\venv-py311\\\\Scripts\\\\ruff.exe\" --version)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/ruff.exe\" check src/)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/ruff.exe\" check src/rctbp_bf_training/core/objectives.py src/rctbp_bf_training/core/results.py src/rctbp_bf_training/core/threshold.py src/rctbp_bf_training/core/dashboard.py src/rctbp_bf_training/core/optimization.py src/rctbp_bf_training/core/__init__.py)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/mypy.exe\" src/rctbp_bf_training/core/objectives.py src/rctbp_bf_training/core/results.py src/rctbp_bf_training/core/threshold.py src/rctbp_bf_training/core/dashboard.py)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/pytest.exe\" tests/ -x --tb=short)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/ruff.exe\" check src/rctbp_bf_training/core/optimization.py)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/ruff.exe\" check src/rctbp_bf_training/core/objectives.py src/rctbp_bf_training/core/results.py src/rctbp_bf_training/core/threshold.py src/rctbp_bf_training/core/dashboard.py src/rctbp_bf_training/core/optimization.py src/rctbp_bf_training/core/__init__.py src/rctbp_bf_training/plotting/diagnostics.py src/rctbp_bf_training/core/validation.py)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/ruff.exe\" check src/rctbp_bf_training/core/objectives.py src/rctbp_bf_training/core/results.py src/rctbp_bf_training/core/threshold.py src/rctbp_bf_training/core/dashboard.py src/rctbp_bf_training/core/__init__.py)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh auth status:*)",
+      "Bash(git remote get-url:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(gh pr create --title \"Refactor: split optimization.py into focused modules\" --body \"$\\(cat <<''EOF''\n## Summary\n- **Split 1,612-line `optimization.py`** into 4 focused modules \\(`objectives.py`, `results.py`, `threshold.py`, `dashboard.py`\\) while keeping `optimization.py` as the core Optuna orchestration with backward-compatible re-exports\n- **Fixed bug** in `validation.py` line 817: undefined `conditions_list` → `condition_grid`\n- **Added deprecation warning** to legacy `extract_calibration_metrics\\(\\)` pointing to `run_validation_pipeline\\(\\)`\n- **Cleaned up `diagnostics.py`**: removed dead duplicate `plot_coverage_diff`, extracted `_create_condition_grid\\(\\)` and `_hide_empty_subplots\\(\\)` helpers to DRY up 5 grid-plot functions\n\n## Module breakdown\n\n| Module | LOC | Responsibility |\n|--------|-----|----------------|\n| `objectives.py` | ~240 | Parameter counting, normalization, objective computation |\n| `results.py` | ~330 | Optuna trial analysis, Pareto front, visualization |\n| `threshold.py` | ~280 | Threshold-based training loop \\(Optuna-independent\\) |\n| `dashboard.py` | ~120 | Optuna Dashboard CLI launcher |\n| `optimization.py` | ~690 | Core Optuna study creation, hyperparameter sampling, objective factory |\n\n## Backward compatibility\nAll existing imports continue to work:\n```python\n# This still works — optimization.py re-exports everything\nfrom rctbp_bf_training.core.optimization import get_pareto_trials\n```\n\n## Test plan\n- [x] `pytest tests/` passes \\(1 test\\)\n- [x] `ruff check` — no new issues \\(only pre-existing UP035/UP006 patterns\\)\n- [x] Package import test validates module loading\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\nEOF\n\\)\")",
+      "Bash(git checkout:*)",
+      "Bash(\"/c/Users/Matze/Documents/GitHub/rctbp_bf_training/venv-py312/Scripts/pytest.exe\" tests/ -v --tb=short)",
+      "Bash(gh pr create:*)"
     ]
   }
 }
