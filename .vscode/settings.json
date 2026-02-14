@@ -1,0 +1,6 @@
+{
+    "python.venvFolders": [
+        "venv-py311",
+        "venv-py312"
+    ]
+}
